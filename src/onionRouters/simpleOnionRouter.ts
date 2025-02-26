@@ -1,8 +1,7 @@
 import bodyParser from "body-parser";
 import express from "express";
-import axios from "axios";
 import { BASE_ONION_ROUTER_PORT, REGISTRY_PORT } from "../config";
-import { generateRsaKeyPair, exportPubKey } from '../crypto';
+import { generateRsaKeyPair, exportPubKey, exportPrvKey } from '../crypto';
 
 export async function simpleOnionRouter(nodeId: number) {
   const onionRouter = express();
@@ -13,14 +12,15 @@ export async function simpleOnionRouter(nodeId: number) {
   let lastReceivedDecryptedMessage: string | null = null;
   let lastMessageDestination: number | null = null;
 
-  try {
-    const { publicKey } = await generateRsaKeyPair();
-    const pubKey = await exportPubKey(publicKey);
-    await axios.post(`http://localhost:${REGISTRY_PORT}/registerNode`, { nodeId, pubKey });
-    console.log(`Node ${nodeId} registered successfully`);
-  } catch (error) {
-    console.error(`Error registering node ${nodeId}:`, error);
-  }
+  const { publicKey, privateKey } = await generateRsaKeyPair();
+  const pubKeyBase64 = await exportPubKey(publicKey);
+  const prvKeyBase64 = await exportPrvKey(privateKey);
+
+  await fetch(`http://localhost:${REGISTRY_PORT}/registerNode`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nodeId, pubKey: pubKeyBase64 }),
+  });
 
   onionRouter.get("/getLastReceivedEncryptedMessage", (req, res) => {
     res.json({ result: lastReceivedEncryptedMessage });
@@ -34,13 +34,8 @@ export async function simpleOnionRouter(nodeId: number) {
     res.json({ result: lastMessageDestination });
   });
 
-  onionRouter.post("/receiveMessage", (req, res) => {
-    const { encryptedMessage, decryptedMessage, destinationPort } = req.body;
-    lastReceivedEncryptedMessage = encryptedMessage;
-    lastReceivedDecryptedMessage = decryptedMessage;
-    lastMessageDestination = destinationPort;
-
-    res.send("Message received");
+  onionRouter.get("/getPrivateKey", (req, res) => {
+    res.json({ result: prvKeyBase64 });
   });
 
   onionRouter.get("/status", (req, res) => {

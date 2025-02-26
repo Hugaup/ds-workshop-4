@@ -1,8 +1,6 @@
 import bodyParser from "body-parser";
-import express from "express";
-import { webcrypto } from "crypto";
+import express, { Request, Response } from "express";
 import { REGISTRY_PORT } from "../config";
-import { generateRsaKeyPair, exportPrvKey } from "../crypto";
 
 export type Node = { nodeId: number; pubKey: string };
 
@@ -11,15 +9,7 @@ export type RegisterNodeBody = {
   pubKey: string;
 };
 
-export type GetNodeRegistryBody = {
-  nodes: {
-    nodeId: number;
-    pubKey: string;
-  }[];
-};
-
-let nodeRegistry: Map<number, Node> = new Map();
-let nodePrivateKeys: Map<number, webcrypto.CryptoKey> = new Map();
+export type GetNodeRegistryBody = { nodes: Node[] };
 
 export async function launchRegistry() {
   const _registry = express();
@@ -30,45 +20,22 @@ export async function launchRegistry() {
     res.send("live");
   });
 
+  const nodesR: Node[] = []; 
+
   _registry.post("/registerNode", async (req, res) => {
     const { nodeId, pubKey }: RegisterNodeBody = req.body;
-
-    try {
-      const { publicKey, privateKey } = await generateRsaKeyPair();
-      nodeRegistry.set(nodeId, { nodeId, pubKey: pubKey });
-      nodePrivateKeys.set(nodeId, privateKey);
-
-      res.status(200).send("Node registered successfully");
-    } catch (error) {
-      res.status(500).json({ error: "Error registering the node" });
+    if (nodeId == undefined || pubKey == undefined) {
+      return res.status(400).json({error : "Missing nodeId or pubKey"});
     }
-  });
-
-  _registry.get("/getPrivateKey", async (req, res) => {
-    // Get the first available private key in the map (no nodeId required)
-    const firstPrivateKey = nodePrivateKeys.values().next().value;
-  
-    if (!firstPrivateKey) {
-      return res.status(404).json({ error: "No private key available" });
+    if (nodesR.some(node => node.nodeId === nodeId)) {
+      return res.status(400).json({error : "Node already registered"});
     }
-  
-    try {
-      // Export and return the private key as a base64 string
-      const base64PrivateKey = await exportPrvKey(firstPrivateKey);
-      return res.json({ result: base64PrivateKey });
-    } catch (error) {
-      return res.status(500).json({ error: "Error exporting private key" });
-    }
-  });  
+    nodesR.push({ nodeId, pubKey });
+    return res.json({ nodeId, pubKey });
+  }); 
 
-  _registry.get("/getNodeRegistry", (req, res) => {
-    const nodes: { nodeId: number; pubKey: string }[] = Array.from(nodeRegistry.values()).map(node => ({
-      nodeId: node.nodeId,
-      pubKey: node.pubKey
-    }));
-
-    const response: GetNodeRegistryBody = { nodes };
-    res.json(response);
+  _registry.get("/getNodeRegistry", (req, res: Response<GetNodeRegistryBody>) => {
+    res.json({ nodes: nodesR });
   });
 
   const server = _registry.listen(REGISTRY_PORT, () => {
