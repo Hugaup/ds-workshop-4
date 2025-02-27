@@ -1,8 +1,7 @@
 import bodyParser from "body-parser";
 import express from "express";
-import { BASE_USER_PORT } from "../config";
 import { createRandomSymmetricKey, exportSymKey, importSymKey, symEncrypt, rsaEncrypt } from '../crypto';
-import { REGISTRY_PORT, BASE_ONION_ROUTER_PORT } from "../config";
+import { REGISTRY_PORT, BASE_ONION_ROUTER_PORT, BASE_USER_PORT } from "../config";
 import { GetNodeRegistryBody } from "../registry/registry";
 
 export type SendMessageBody = {
@@ -10,10 +9,10 @@ export type SendMessageBody = {
   destinationUserId: number;
 };
 
-export type ReceiveMessageBody = {
-  message: string;
+export type nodeCircuit = { 
+  nodeId: number;
+  pubKey: string;
 };
-export type nodeCircuit = { nodeId: number; pubKey: string };
 
 let lastCircuit: nodeCircuit[] | null = null;
 
@@ -33,16 +32,11 @@ export async function user(userId: number) {
     res.json({ result: lastSentMessage });
   });
 
-  _user.post("/sendMessage", (req, res) => {
-    const { message } = req.body;
-    lastSentMessage = message;
-    res.send("Message sent");
-  });
-
   _user.post("/message", (req, res) => {
-    const { message } = req.body as ReceiveMessageBody;
+    const { message } = req.body;
     lastReceivedMessage = message;
-    res.status(200).send("success");
+    console.log(`User ${userId} received message: ${message}`);
+    res.send("success");
   });
 
   _user.get("/getLastCircuit", (req, res) => {
@@ -71,43 +65,46 @@ export async function user(userId: number) {
     const { message, destinationUserId } = req.body as SendMessageBody;
     const response = await fetch(`http://localhost:${REGISTRY_PORT}/getNodeRegistry`);
     const { nodes } = await response.json() as GetNodeRegistryBody;
+
+    lastSentMessage = message;
+    console.log(`[User ${userId}] is sending a message to user ${destinationUserId}: ${message}`);
+
     const circuit: any[] = [];
     while (circuit.length < 3) {
-      const randomNode = nodes[Math.floor(Math.random() * nodes.length)];
-      if (!circuit.includes(randomNode)) {
-        circuit.push(randomNode);
-      }
+        const randomNode = nodes[Math.floor(Math.random() * nodes.length)];
+        if (!circuit.includes(randomNode)) {
+            circuit.push(randomNode);
+        }
     }
+
     lastCircuit = circuit.map((n) => n.nodeId);
-  
+
     let encryptedMessage = message;
     let destination = String(BASE_USER_PORT + destinationUserId).padStart(10, '0');
-  
+
     for (const node of circuit) {
-      const symKeyCrypto = await createRandomSymmetricKey();
-      const symKeyString = await exportSymKey(symKeyCrypto);
-      const symKey = await importSymKey(symKeyString);
+        const symKeyCrypto = await createRandomSymmetricKey();
+        const symKeyString = await exportSymKey(symKeyCrypto);
+        const symKey = await importSymKey(symKeyString);
+        const tempMessage = await symEncrypt(symKey, destination + encryptedMessage);
+
+        destination = String(BASE_ONION_ROUTER_PORT + node.nodeId).padStart(10, '0');
+        const encryptedSymKey = await rsaEncrypt(symKeyString, node.pubKey);
   
-      const tempMessage = await symEncrypt(symKey, destination + encryptedMessage);
-  
-      destination = String(BASE_ONION_ROUTER_PORT + node.nodeId).padStart(10, '0');
-  
-      const encryptedSymKey = await rsaEncrypt(symKeyString, node.pubKey);
-  
-      encryptedMessage = encryptedSymKey + tempMessage;
+        encryptedMessage = encryptedSymKey + tempMessage;
     }
-    circuit.reverse();
-    lastCircuit = circuit;
+    lastCircuit = circuit.reverse();
     lastSentMessage = message;
-  
+
     const entryNode = circuit[0];
     await fetch(`http://localhost:${BASE_ONION_ROUTER_PORT + entryNode.nodeId}/message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: encryptedMessage }),
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: encryptedMessage }),
     });
     res.sendStatus(200);
   });
+
 
   const server = _user.listen(BASE_USER_PORT + userId, () => {
     console.log(`User ${userId} is listening on port ${BASE_USER_PORT + userId}`);

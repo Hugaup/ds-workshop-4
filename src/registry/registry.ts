@@ -20,22 +20,22 @@ export async function launchRegistry() {
     res.send("live");
   });
 
-  const nodesR: Node[] = []; 
+  const nodesReg: Node[] = []; 
 
   _registry.post("/registerNode", async (req, res) => {
     const { nodeId, pubKey }: RegisterNodeBody = req.body;
     if (nodeId == undefined || pubKey == undefined) {
       return res.status(400).json({error : "Missing nodeId or pubKey"});
     }
-    if (nodesR.some(node => node.nodeId === nodeId)) {
+    if (nodesReg.some(node => node.nodeId === nodeId)) {
       return res.status(400).json({error : "Node already registered"});
     }
-    nodesR.push({ nodeId, pubKey });
+    nodesReg.push({ nodeId, pubKey });
     return res.json({ nodeId, pubKey });
   }); 
 
   _registry.get("/getNodeRegistry", (req, res: Response<GetNodeRegistryBody>) => {
-    res.json({ nodes: nodesR });
+    res.json({ nodes: nodesReg });
   });
 
   const server = _registry.listen(REGISTRY_PORT, () => {
